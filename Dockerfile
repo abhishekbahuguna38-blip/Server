@@ -1,26 +1,33 @@
-# Build stage
+# Use the official .NET 8 runtime as a parent image
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
+WORKDIR /app
+EXPOSE 8080
+
+# Use the SDK image to build the application
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy solution and restore
-COPY AdminServer.sln ./
-COPY AdminServerStub/AdminServerStub.csproj AdminServerStub/
-COPY AdminServerStub.Tests/AdminServerStub.Tests.csproj AdminServerStub.Tests/
-RUN dotnet restore AdminServerStub/AdminServerStub.csproj
+# Copy csproj and restore as distinct layers
+COPY ["AdminServerStub/AdminServerStub.csproj", "AdminServerStub/"]
+COPY ["AdminServerStub.Tests/AdminServerStub.Tests.csproj", "AdminServerStub.Tests/"]
+RUN dotnet restore "AdminServerStub/AdminServerStub.csproj"
 
-# Copy everything and build
-COPY . ./
-RUN dotnet publish AdminServerStub/AdminServerStub.csproj -c Release -o /app/publish /p:UseAppHost=false
+# Copy everything else and build
+COPY . .
+WORKDIR "/src/AdminServerStub"
+RUN dotnet build "AdminServerStub.csproj" -c Release -o /app/build
 
-# Runtime stage
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
+# Publish the application
+FROM build AS publish
+RUN dotnet publish "AdminServerStub.csproj" -c Release -o /app/publish
+
+# Build the final image
+FROM base AS final
 WORKDIR /app
-COPY --from=build /app/publish .
+COPY --from=publish /app/publish .
 
-# Railway provides PORT env var; Program.cs already uses it and binds 0.0.0.0
-ENV ASPNETCORE_URLS=http://0.0.0.0:${PORT}
-
-# Default port (Railway will set PORT at runtime)
-EXPOSE 5030
+# Set the port to match Render's expectation
+ENV ASPNETCORE_URLS=http://+:8080
+ENV PORT=8080
 
 ENTRYPOINT ["dotnet", "AdminServerStub.dll"]
